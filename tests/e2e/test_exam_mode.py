@@ -14,7 +14,9 @@ pytestmark = pytest.mark.e2e
 @pytest.fixture(autouse=True)
 def mock_subprocess():
     mock_result = MagicMock(returncode=0, stdout="", stderr="")
-    with patch("subprocess.run", return_value=mock_result):
+    pool = [f"/dev/loop{i}" for i in range(10)]
+    with patch("subprocess.run", return_value=mock_result), \
+         patch("utils.helpers.build_device_pool", return_value=pool):
         yield
 
 

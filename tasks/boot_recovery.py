@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 @TaskRegistry.register("boot_recovery")
 class RootPasswordResetTask(BaseTask):
-    """Reset root password using the rd.break boot procedure."""
+    """Reset root password using the rd.break boot procedure on the lab box."""
 
     exam_eligible = False
+    requires_lab_machine = True
+    has_setup = True
 
     def __init__(self):
         super().__init__(
@@ -73,8 +75,9 @@ class RootPasswordResetTask(BaseTask):
             f"\n"
             f"Recover root access and set the root password to: {self.new_password}\n"
             f"\n"
-            f"The system is currently running. You will need to interrupt the boot\n"
-            f"process to gain access without the current root password.\n"
+            f"This task runs on the linked lab machine, not the simulator host.\n"
+            f"Open that machine's console and interrupt its boot process to gain\n"
+            f"access without the current root password.\n"
             f"Changes must survive reboot."
         )
 
@@ -89,94 +92,79 @@ class RootPasswordResetTask(BaseTask):
 
         return self
 
+    def setup_environment(self):
+        """Plant an unknown password on the linked machine before the task."""
+        from core import boot_rescue
+
+        ok, message = boot_rescue.start()
+        return ok, message
+
+    def teardown_environment(self):
+        """Keep the rescue scenario alive until the candidate resolves it.
+
+        A normal task teardown runs at the end of a practice session, which can
+        happen while the candidate is still at the lab machine's console.
+        The next session's global reset restores any unresolved scenario.
+        """
+        return True, "boot-rescue scenario remains active until validated"
+
     def validate(self):
-        """Validate root password was recently reset and account is active."""
-        checks = []
-        total_points = 0
+        """Validate recovery on the linked machine, including the requested password."""
+        from core import boot_rescue
 
-        # Check 1: /etc/shadow exists and root entry present (4 points)
-        result = execute_safe(['stat', '--format=%Y', '/etc/shadow'])
-        shadow_exists = result.success
-        if shadow_exists:
-            checks.append(ValidationCheck(
-                name="shadow_accessible",
-                passed=True,
-                points=4,
-                message="/etc/shadow is accessible and contains password data"
-            ))
-            total_points += 4
-        else:
-            checks.append(ValidationCheck(
-                name="shadow_accessible",
-                passed=False,
-                points=0,
+        rescue_checks, _, error = boot_rescue.validate()
+        if error:
+            return ValidationResult(
+                self.id, False, 0, self.points,
+                [ValidationCheck("lab_machine_reachable", False, 0, error,
+                                 max_points=self.points)]
+            )
+
+        by_name = {name: passed for name, passed, _ in rescue_checks}
+        password_ok = boot_rescue.verify_password(self.new_password)
+        checks = [
+            ValidationCheck(
+                "password_set",
+                password_ok is True,
+                8 if password_ok is True else 0,
+                "root password matches the requested value"
+                if password_ok is True else
+                "root password does not match the requested value",
+                max_points=8,
+            ),
+            ValidationCheck(
+                "rebooted",
+                by_name.get("rebooted") is True,
+                5 if by_name.get("rebooted") is True else 0,
+                "lab machine rebooted successfully"
+                if by_name.get("rebooted") is True else
+                "lab machine has not rebooted since the scenario started",
+                max_points=5,
+            ),
+            ValidationCheck(
+                "selinux_context",
+                by_name.get("selinux_context") is not False,
+                4 if by_name.get("selinux_context") is not False else 0,
+                "SELinux handling is correct on /etc/shadow"
+                if by_name.get("selinux_context") is not False else
+                "SELinux handling on /etc/shadow is incorrect",
                 max_points=4,
-                message=f"/etc/shadow is not accessible: {result.stderr}"
-            ))
-
-        # Check 2: Root password was recently modified (8 points)
-        # Use chage -l root to inspect last password change date
-        result = execute_safe(['chage', '-l', 'root'])
-        pw_recently_changed = False
-        if result.success:
-            import datetime
-            today_str = datetime.date.today().strftime('%b %d, %Y')
-            # Also check with alternate date formats
-            today_alt = datetime.date.today().strftime('%Y-%m-%d')
-            output = result.stdout
-            for line in output.splitlines():
-                if 'last password change' in line.lower():
-                    if today_str in line or today_alt in line or 'never' not in line.lower():
-                        pw_recently_changed = True
-                    break
-
-        if pw_recently_changed:
-            checks.append(ValidationCheck(
-                name="password_recently_changed",
-                passed=True,
-                points=8,
-                message="Root password has been recently changed"
-            ))
-            total_points += 8
-        else:
-            checks.append(ValidationCheck(
-                name="password_recently_changed",
-                passed=False,
-                points=0,
-                max_points=8,
-                message="Root password does not appear to have been recently changed"
-            ))
-
-        # Check 3: Root account is not locked (8 points)
-        result = execute_safe(['passwd', '-S', 'root'])
-        account_active = False
-        if result.success:
-            parts = result.stdout.strip().split()
-            # passwd -S output: root PS|NP|LK <date> ...
-            # PS = password set, NP = no password, LK = locked
-            if len(parts) >= 2 and parts[1] in ('PS', 'P'):
-                account_active = True
-
-        if account_active:
-            checks.append(ValidationCheck(
-                name="root_account_active",
-                passed=True,
-                points=8,
-                message="Root account is active and not locked"
-            ))
-            total_points += 8
-        else:
-            status_info = result.stdout.strip() if result.success else result.stderr
-            checks.append(ValidationCheck(
-                name="root_account_active",
-                passed=False,
-                points=0,
-                max_points=8,
-                message=f"Root account may be locked or has no password set. Status: {status_info}"
-            ))
-
-        passed = total_points >= (self.points * 0.7)
-        return ValidationResult(self.id, passed, total_points, self.points, checks)
+            ),
+            ValidationCheck(
+                "system_up",
+                by_name.get("system_up") is True,
+                3 if by_name.get("system_up") is True else 0,
+                "lab machine is back in a normal running state"
+                if by_name.get("system_up") is True else
+                "lab machine is not in a normal running state",
+                max_points=3,
+            ),
+        ]
+        score = sum(check.points for check in checks)
+        passed = score >= self.points * 0.7
+        if passed:
+            boot_rescue.clear_state()
+        return ValidationResult(self.id, passed, score, self.points, checks)
 
 
 # ---------------------------------------------------------------------------

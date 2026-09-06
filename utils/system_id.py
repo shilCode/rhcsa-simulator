@@ -365,7 +365,9 @@ def efi_grub_configs():
 
 def grub_config_present():
     """True if a usable GRUB config exists (BIOS or UEFI layout)."""
-    return os.path.isfile('/boot/grub2/grub.cfg') or bool(efi_grub_configs())
+    return (os.path.isfile('/boot/grub2/grub.cfg') or
+            os.path.isfile('/boot/grub/grub.cfg') or
+            bool(efi_grub_configs()))
 
 
 # ── environment report ──────────────────────────────────────────────────────

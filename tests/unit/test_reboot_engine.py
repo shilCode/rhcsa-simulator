@@ -29,6 +29,46 @@ class TestBootChecks:
         assert blockers == []
 
     @patch("core.reboot_engine.execute_safe")
+    def test_boot_success_with_findmnt_warnings(self, mock_exec, engine):
+        def side_effect(cmd, *args, **kwargs):
+            if "findmnt" in cmd:
+                return MagicMock(
+                    success=True,
+                    stdout="/\n   [W] cannot detect on-disk filesystem type",
+                    stderr="0 parse errors, 0 errors, 5 warnings",
+                )
+            elif "systemctl" in cmd:
+                return MagicMock(success=True, stdout="multi-user.target", stderr="")
+            elif "test" in cmd:
+                return MagicMock(success=True, stdout="", stderr="")
+            return MagicMock(success=True, stdout="", stderr="")
+
+        mock_exec.side_effect = side_effect
+        success, blockers = engine._check_boot_critical()
+        assert success is True
+        assert blockers == []
+
+    @patch("core.reboot_engine.execute_safe")
+    def test_boot_failure_with_findmnt_error_marker(self, mock_exec, engine):
+        def side_effect(cmd, *args, **kwargs):
+            if "findmnt" in cmd:
+                return MagicMock(
+                    success=True,
+                    stdout="[E] /nonexistent: mountpoint does not exist",
+                    stderr="0 parse errors, 1 error, 0 warnings",
+                )
+            elif "systemctl" in cmd:
+                return MagicMock(success=True, stdout="multi-user.target", stderr="")
+            elif "test" in cmd:
+                return MagicMock(success=True, stdout="", stderr="")
+            return MagicMock(success=True, stdout="", stderr="")
+
+        mock_exec.side_effect = side_effect
+        success, blockers = engine._check_boot_critical()
+        assert success is False
+        assert any("fstab" in b.lower() for b in blockers)
+
+    @patch("core.reboot_engine.execute_safe")
     def test_boot_failure_with_fstab_error(self, mock_exec, engine):
         def side_effect(cmd, *args, **kwargs):
             if "findmnt" in cmd:
@@ -43,6 +83,30 @@ class TestBootChecks:
         success, blockers = engine._check_boot_critical()
         assert success is False
         assert any("fstab" in b.lower() for b in blockers)
+
+    @patch("core.reboot_engine.execute_safe")
+    def test_boot_fstab_fallback_cat(self, mock_exec, engine):
+        def side_effect(cmd, *args, **kwargs):
+            if "findmnt" in cmd:
+                return MagicMock(success=False, stdout="", stderr="findmnt not found")
+            elif "cat" in cmd:
+                return MagicMock(
+                    success=True,
+                    stdout="UUID=1234-5678 /data xfs defaults 0 0\n",
+                    stderr="",
+                )
+            elif "blkid" in cmd:
+                return MagicMock(success=True, stdout="/dev/sda1", stderr="")
+            elif "systemctl" in cmd:
+                return MagicMock(success=True, stdout="graphical.target", stderr="")
+            elif "test" in cmd:
+                return MagicMock(success=True, stdout="", stderr="")
+            return MagicMock(success=True, stdout="", stderr="")
+
+        mock_exec.side_effect = side_effect
+        success, blockers = engine._check_boot_critical()
+        assert success is True
+        assert blockers == []
 
 
 class TestPersistenceRevalidation:

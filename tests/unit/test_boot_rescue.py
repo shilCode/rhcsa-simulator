@@ -6,6 +6,7 @@ import json
 import pytest
 
 from core import lab_machine, boot_rescue
+from tasks.boot_recovery import RootPasswordResetTask
 
 
 @pytest.fixture
@@ -192,3 +193,43 @@ class TestWalkthrough:
         assert 'echo b > /proc/sysrq-trigger' in text
         assert 'autorelabel' in text
         assert 'Give root password for maintenance' in text
+
+
+class TestLinkedRootPasswordTask:
+    def test_setup_starts_remote_scenario(self, monkeypatch):
+        task = RootPasswordResetTask().generate(password='BootFix$99')
+        monkeypatch.setattr(
+            boot_rescue, 'start', lambda: (True, 'scenario started'))
+
+        ok, message = task.setup_environment()
+
+        assert ok
+        assert message == 'scenario started'
+        assert task.requires_lab_machine
+        assert task.has_setup
+
+    def test_validation_uses_remote_machine_and_requested_password(self, monkeypatch):
+        task = RootPasswordResetTask().generate(password='BootFix$99')
+        monkeypatch.setattr(
+            boot_rescue, 'validate',
+            lambda: ([
+                ('password_changed', True, 'changed'),
+                ('rebooted', True, 'rebooted'),
+                ('selinux_context', True, 'labeled'),
+                ('system_up', True, 'running'),
+            ], 'rd.break', None))
+        monkeypatch.setattr(
+            boot_rescue, 'verify_password',
+            lambda password: password == 'BootFix$99')
+        cleared = []
+        monkeypatch.setattr(boot_rescue, 'clear_state',
+                            lambda: cleared.append(True))
+
+        result = task.validate()
+
+        assert result.passed
+        assert result.score == 20
+        assert cleared == [True]
+        assert [check.name for check in result.checks] == [
+            'password_set', 'rebooted', 'selinux_context', 'system_up'
+        ]

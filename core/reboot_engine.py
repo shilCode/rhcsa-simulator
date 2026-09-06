@@ -102,13 +102,25 @@ class RebootEngine:
 
     def _check_fstab(self):
         """Validate fstab using findmnt --verify."""
+        import re
         result = execute_safe(['findmnt', '--verify', '--tab-file', '/etc/fstab'])
         if result.success:
-            # findmnt --verify returns 0 if all entries are valid
-            # Check stderr for warnings
-            if result.stderr and 'error' in result.stderr.lower():
-                logger.warning(f"fstab verification warnings: {result.stderr}")
+            # findmnt --verify returns 0 if all entries are valid (0 parse errors, 0 errors).
+            # Check for any explicit [E] error lines in output or non-zero error counts in stderr.
+            output = (result.stdout or '') + '\n' + (result.stderr or '')
+            if '[E]' in output:
+                logger.warning(f"fstab verification errors found: {output}")
                 return False
+            if result.stderr:
+                err_lines = [
+                    line for line in result.stderr.splitlines()
+                    if 'error' in line.lower()
+                    and not re.search(r'\b0\s+parse\s+errors?,\s*0\s+errors?\b', line, re.IGNORECASE)
+                    and not re.search(r'^\s*0\s+errors?\b', line, re.IGNORECASE)
+                ]
+                if err_lines:
+                    logger.warning(f"fstab verification errors: {result.stderr}")
+                    return False
             return True
 
         # If findmnt fails, try basic cat check
@@ -137,20 +149,30 @@ class RebootEngine:
                 continue
             # UUID-based entries - verify UUID exists
             if device.startswith('UUID='):
-                uuid = device.split('=', 1)[1]
+                uuid = device.split('=', 1)[1].strip('"\'')
                 blkid_result = execute_safe(['blkid', '-U', uuid])
                 if not blkid_result.success:
                     logger.warning(f"fstab: UUID {uuid} not found for {mount}")
+                    return False
+            elif device.startswith('LABEL='):
+                label = device.split('=', 1)[1].strip('"\'')
+                blkid_result = execute_safe(['blkid', '-L', label])
+                if not blkid_result.success:
+                    logger.warning(f"fstab: LABEL {label} not found for {mount}")
                     return False
 
         return True
 
     def _check_default_target(self):
         """Check that default systemd target is valid."""
+        import os
         result = execute_safe(['systemctl', 'get-default'])
-        if not result.success:
-            return False
-        target = result.stdout.strip()
+        target = ""
+        if result.success:
+            target = result.stdout.strip()
+        elif os.path.islink('/etc/systemd/system/default.target'):
+            target = os.path.basename(os.path.realpath('/etc/systemd/system/default.target'))
+
         valid_targets = [
             'multi-user.target', 'graphical.target',
             'rescue.target', 'emergency.target',
@@ -177,6 +199,11 @@ class RebootEngine:
         for cfg in efi_grub_configs():
             if execute_safe(['test', '-f', cfg]).success:
                 return True
+
+        # Debian/Ubuntu layout fallback
+        if execute_safe(['test', '-f', '/boot/grub/grub.cfg']).success:
+            return True
+
         return False
 
     def get_reboot_report(self, reboot_result, tasks):
