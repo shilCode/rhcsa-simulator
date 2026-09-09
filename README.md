@@ -5,9 +5,11 @@ A command-line **RHCSA EX200 v10** (Red Hat Enterprise Linux 10) exam simulator.
 It generates tasks, sets up each task's starting state, validates your real
 system configuration with safe read-only checks, and tracks progress over time.
 
-> **188 tasks · 25 categories · 8 domains**, aligned to EX200 v10 — including
-> Flatpak, systemd timers, `tuned-adm`, and secure file transfer (no legacy
-> module streams).
+> **226 tasks · 26 categories · 8 domains**, aligned to the current RHCSA
+> practice syllabus — including Flatpak, systemd timers, `tuned-adm`, and
+> secure file transfer (no legacy module streams). Each topic also has a
+> supplemental command-verification exercise; these are practice-only and do
+> not dilute randomized exam generation.
 >
 > **Active development** — useful for prep, but expect rough edges. Bug reports
 > and contributions welcome.

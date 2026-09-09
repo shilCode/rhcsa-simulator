@@ -54,7 +54,7 @@ OBJECTIVES_V10 = {
             "Set special permissions (SGID, SUID, sticky bit)",
             "Configure umask for default permissions",
         ],
-        "categories": ["users_groups", "permissions"],
+        "categories": ["users_groups", "permissions", "essential_tools"],
     },
     4: {
         "name": "Storage & Filesystems",
@@ -84,7 +84,7 @@ OBJECTIVES_V10 = {
             "Troubleshoot network connectivity",
             "Configure IPv6 addresses",
         ],
-        "categories": ["networking"],
+        "categories": ["networking", "ssh"],
     },
     6: {
         "name": "Systemd, Services & Processes",
@@ -97,7 +97,10 @@ OBJECTIVES_V10 = {
             "Configure timer-based recurring tasks",
             "Manage running processes (kill, nice, renice)",
         ],
-        "categories": ["services", "systemd_timers"],
+        "categories": [
+            "services", "systemd_timers", "processes", "time_services",
+            "troubleshooting",
+        ],
     },
     7: {
         "name": "Security - SELinux & Firewall",

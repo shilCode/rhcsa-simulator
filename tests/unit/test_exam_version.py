@@ -141,6 +141,36 @@ def test_v10_objectives_carry_flatpak_and_not_containers():
     assert 'podman' not in text and 'skopeo' not in text
 
 
+@pytest.mark.parametrize('version', [9, 10])
+def test_every_in_scope_task_category_is_in_objectives(version):
+    """No supported practice topic should be orphaned from the syllabus."""
+    settings.set_exam_version(version)
+    objective_categories = {
+        category
+        for domain in get_objectives(version).values()
+        for category in domain["categories"]
+    }
+    assert set(TaskRegistry.categories_in_scope()) <= objective_categories
+
+
+@pytest.mark.parametrize('category', [
+    'packages', 'repos', 'boot', 'boot_recovery', 'journalctl',
+    'users_groups', 'permissions', 'essential_tools', 'partitioning',
+    'lvm', 'filesystems', 'swap', 'network_storage', 'networking', 'ssh',
+    'services', 'processes', 'time_services', 'troubleshooting', 'selinux',
+    'firewall', 'scheduling', 'scripting', 'flatpak', 'systemd_timers',
+    'containers',
+])
+def test_each_topic_has_a_supplemental_verification_task(category):
+    """Every topic gets a current-RHEL command exercise for practice mode."""
+    tasks = TaskRegistry.get_tasks_by_category(category)
+    assert any(
+        getattr(task, 'exam_eligible', True) is False
+        and task().__class__.__name__.endswith('VerificationTask')
+        for task in tasks
+    )
+
+
 # ── generated exams ─────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize('version', [9, 10])

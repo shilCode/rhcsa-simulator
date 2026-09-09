@@ -109,6 +109,14 @@ def _get_connection_name(interface):
     return interface
 
 
+def _nmcli_value_contains(connection, key, expected):
+    """Match a value in an nmcli profile, including list-valued properties."""
+    if not connection:
+        return False
+    value = str(connection.get(key, '')).replace('\\:', ':')
+    return expected in value.split(',') or expected in value.split()
+
+
 def _random_subnet():
     """Return a random third-octet value for 192.168.x.0/24 ranges."""
     return random.randint(1, 254)
@@ -220,28 +228,31 @@ class ConfigureStaticIPTask(BaseTask):
             checks.append(ValidationCheck("ip_address_set", False, 0,
                           f"IP is {actual_ip}, expected {self.ip_address}", max_points=5))
 
-        # 2. Gateway reachable in routing table (3 pts)
-        gw = get_default_gateway()
-        if gw == self.gateway:
+        # The practice interface is intentionally marked never-default so it
+        # cannot disrupt the host's connectivity. Validate its profile rather
+        # than requiring it to replace the host's global default route.
+        conn = get_nmcli_connection_info(self.connection_name)
+        if _nmcli_value_contains(conn, 'ipv4.gateway', self.gateway):
             checks.append(ValidationCheck("gateway_set", True, 3,
-                          f"Gateway {self.gateway} is active"))
+                          f"Gateway {self.gateway} is configured"))
             total += 3
         else:
+            configured = conn.get('ipv4.gateway', 'unset') if conn else 'connection not found'
             checks.append(ValidationCheck("gateway_set", False, 0,
-                          f"Gateway is {gw}, expected {self.gateway}", max_points=3))
+                          f"Gateway is {configured}, expected {self.gateway}", max_points=3))
 
-        # 3. DNS configured (2 pts)
-        dns_list = get_dns_servers()
-        if self.dns in dns_list:
+        # DNS is likewise profile-scoped; the isolated profile must not
+        # overwrite the simulator host's resolver configuration.
+        if _nmcli_value_contains(conn, 'ipv4.dns', self.dns):
             checks.append(ValidationCheck("dns_set", True, 2,
-                          f"DNS {self.dns} configured"))
+                          f"DNS {self.dns} is configured"))
             total += 2
         else:
+            configured = conn.get('ipv4.dns', 'unset') if conn else 'connection not found'
             checks.append(ValidationCheck("dns_set", False, 0,
-                          f"DNS {self.dns} not in resolv.conf (found {dns_list})", max_points=2))
+                          f"DNS is {configured}, expected {self.dns}", max_points=2))
 
         # 4. Persistent config via nmcli (3 pts)
-        conn = get_nmcli_connection_info(self.connection_name)
         if conn and conn.get('ipv4.method') == 'manual':
             checks.append(ValidationCheck("method_manual", True, 3,
                           "ipv4.method is 'manual' (persistent)"))
@@ -837,28 +848,26 @@ class TroubleshootNetworkTask(BaseTask):
             checks.append(ValidationCheck("ip_active", False, 0,
                           f"IP is {actual_ip}, expected {self.expected_ip}", max_points=5))
 
-        # 3. Gateway active (4 pts)
-        gw = get_default_gateway()
+        # The isolated practice profile may be configured never-default, so
+        # its gateway is valid even when it is not the host's default route.
         gw_in_config = conn and self.expected_gateway in str(conn.get('ipv4.gateway', ''))
-        if gw == self.expected_gateway:
+        if gw_in_config:
             checks.append(ValidationCheck("gateway_active", True, 4,
-                          f"Gateway {self.expected_gateway} is active"))
+                          f"Gateway {self.expected_gateway} is configured"))
             total += 4
-        elif gw_in_config:
-            checks.append(ValidationCheck("gateway_active", True, 2,
-                          "Gateway configured but may not be active (partial)"))
-            total += 2
         else:
+            gw = get_default_gateway()
             checks.append(ValidationCheck("gateway_active", False, 0,
                           f"Gateway is {gw}, expected {self.expected_gateway}", max_points=4))
 
         # 4. DNS configured (3 pts)
-        dns_list = get_dns_servers()
-        if self.expected_dns in dns_list:
+        dns_in_config = conn and self.expected_dns in str(conn.get('ipv4.dns', ''))
+        if dns_in_config:
             checks.append(ValidationCheck("dns_configured", True, 3,
-                          f"DNS {self.expected_dns} is configured"))
+                          f"DNS {self.expected_dns} is configured in the profile"))
             total += 3
         else:
+            dns_list = get_dns_servers()
             checks.append(ValidationCheck("dns_configured", False, 0,
                           f"DNS {self.expected_dns} not found (current: {dns_list})", max_points=3))
 
